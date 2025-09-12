@@ -13,13 +13,6 @@ venv/
 env/
 ENV/
 
-# Processed data
-processed_data/
-
-# Model outputs
-models/
-plots/
-
 # Jupyter Notebook
 .ipynb_checkpoints
 
