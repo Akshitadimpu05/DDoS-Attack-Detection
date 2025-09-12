@@ -1,0 +1,17 @@
+Collecting kagglehub
+  Downloading kagglehub-0.3.13-py3-none-any.whl.metadata (38 kB)
+Requirement already satisfied: packaging in ./venv/lib/python3.12/site-packages (from kagglehub) (25.0)
+Collecting pyyaml (from kagglehub)
+  Downloading PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (2.1 kB)
+Requirement already satisfied: requests in ./venv/lib/python3.12/site-packages (from kagglehub) (2.32.5)
+Requirement already satisfied: tqdm in ./venv/lib/python3.12/site-packages (from kagglehub) (4.67.1)
+Requirement already satisfied: charset_normalizer<4,>=2 in ./venv/lib/python3.12/site-packages (from requests->kagglehub) (3.4.3)
+Requirement already satisfied: idna<4,>=2.5 in ./venv/lib/python3.12/site-packages (from requests->kagglehub) (3.10)
+Requirement already satisfied: urllib3<3,>=1.21.1 in ./venv/lib/python3.12/site-packages (from requests->kagglehub) (2.5.0)
+Requirement already satisfied: certifi>=2017.4.17 in ./venv/lib/python3.12/site-packages (from requests->kagglehub) (2025.8.3)
+Downloading kagglehub-0.3.13-py3-none-any.whl (68 kB)
+Downloading PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (767 kB)
+   ━━━━━━━━━━━━━━ 767.5/767.5 kB 20.3 MB/s  0:00:00
+Installing collected packages: pyyaml, kagglehub
+
+Successfully installed kagglehub-0.3.13 pyyaml-6.0.2
