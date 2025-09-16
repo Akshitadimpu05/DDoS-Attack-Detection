@@ -174,13 +174,23 @@ class BotIoTPreprocessor:
         
         if label_cols:
             label_col = label_cols[0]
-            # Binary classification: 1 for attack, 0 for normal
-            feature_df['label'] = df[label_col].apply(
-                lambda x: 0 if 'normal' in str(x).lower() or 'benign' in str(x).lower() else 1
-            )
+            print(f"Using label column: {label_col}")
+            print(f"Label column unique values: {df[label_col].unique()}")
+            
+            # Use the 'attack' column directly since it's already 0/1
+            if label_col == 'attack':
+                feature_df['label'] = df[label_col]
+            else:
+                # Binary classification: 1 for attack, 0 for normal
+                feature_df['label'] = df[label_col].apply(
+                    lambda x: 0 if 'normal' in str(x).lower() or 'benign' in str(x).lower() else 1
+                )
         else:
             # If no label found, create dummy labels
             feature_df['label'] = 0
+            
+        # Print label distribution after assignment
+        print(f"Label distribution after assignment: {feature_df['label'].value_counts().to_dict()}")
         
         print(f"Extracted features shape: {feature_df.shape}")
         print(f"Feature columns: {list(feature_df.columns)}")
@@ -188,52 +198,47 @@ class BotIoTPreprocessor:
         return feature_df
     
     def create_time_windows(self, df, window_size=50):
-        """Create time windows for sequence modeling with better diversity"""
-        print(f"Creating time windows of size {window_size}...")
+        """Create non-overlapping time windows to prevent data leakage"""
+        print(f"Creating non-overlapping time windows of size {window_size}...")
         
         # Sort by time if time column exists
         time_cols = [col for col in df.columns if 'time' in col.lower()]
         if time_cols:
             df = df.sort_values(time_cols[0]).reset_index(drop=True)
         
-        # Shuffle the dataframe to increase diversity
-        df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+        # Separate normal and attack samples for balanced windowing
+        normal_samples = df[df['label'] == 0].copy()
+        attack_samples = df[df['label'] == 1].copy()
         
-        # Create windows with smaller stride for more diversity
+        print(f"Normal samples: {len(normal_samples)}, Attack samples: {len(attack_samples)}")
+        
         windows = []
         labels = []
         
-        stride = window_size // 4  # Smaller stride for more overlapping windows
+        # Create windows from normal samples
+        if len(normal_samples) >= window_size:
+            for i in range(0, len(normal_samples) - window_size + 1, window_size):
+                window = normal_samples.iloc[i:i + window_size]
+                feature_cols = [col for col in df.columns if col != 'label']
+                window_features = window[feature_cols].values
+                windows.append(window_features)
+                labels.append(0)  # Normal
         
-        for i in tqdm(range(0, len(df) - window_size + 1, stride)):
-            window = df.iloc[i:i + window_size]
-            
-            # Use majority label for the window, but add some noise tolerance
-            label_counts = window['label'].value_counts()
-            if len(label_counts) > 0:
-                # If the window has mixed labels, use the majority but with threshold
-                majority_label = label_counts.index[0]
-                majority_ratio = label_counts.iloc[0] / len(window)
-                
-                # Only use windows with clear majority (>60%) to reduce noise
-                if majority_ratio >= 0.6:
-                    window_label = majority_label
-                else:
-                    continue  # Skip ambiguous windows
-            else:
-                continue
-            
-            # Extract features (excluding label)
-            feature_cols = [col for col in df.columns if col != 'label']
-            window_features = window[feature_cols].values
-            
-            windows.append(window_features)
-            labels.append(window_label)
+        # Create windows from attack samples  
+        if len(attack_samples) >= window_size:
+            for i in range(0, len(attack_samples) - window_size + 1, window_size):
+                window = attack_samples.iloc[i:i + window_size]
+                feature_cols = [col for col in df.columns if col != 'label']
+                window_features = window[feature_cols].values
+                windows.append(window_features)
+                labels.append(1)  # Attack
+        
+        print(f"Created {len(windows)} windows: {len([l for l in labels if l == 0])} normal, {len([l for l in labels if l == 1])} attack")
         
         return np.array(windows), np.array(labels)
     
-    def preprocess_data(self, window_size=50, test_size=0.3):
-        """Complete preprocessing pipeline"""
+    def preprocess_data(self, window_size=50, test_size=0.2, val_size=0.1):
+        """Complete preprocessing pipeline with proper train/val/test split"""
         print("Starting data preprocessing pipeline...")
         
         # Load data
@@ -257,28 +262,41 @@ class BotIoTPreprocessor:
         print(f"Final data shape: X={X.shape}, y={y.shape}")
         print(f"Label distribution: {np.bincount(y)}")
         
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
+        # First split: separate test set
+        X_temp, X_test, y_temp, y_test = train_test_split(
             X, y, test_size=test_size, random_state=42, stratify=y
         )
         
+        # Second split: separate train and validation from remaining data
+        val_size_adjusted = val_size / (1 - test_size)  # Adjust validation size
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_temp, y_temp, test_size=val_size_adjusted, random_state=42, stratify=y_temp
+        )
+        
         # Normalize features
-        n_samples, n_timesteps, n_features = X_train.shape
+        n_samples_train, n_timesteps, n_features = X_train.shape
         X_train_reshaped = X_train.reshape(-1, n_features)
+        X_val_reshaped = X_val.reshape(-1, n_features)
         X_test_reshaped = X_test.reshape(-1, n_features)
         
+        # Fit scaler only on training data
         X_train_scaled = self.scaler.fit_transform(X_train_reshaped)
+        X_val_scaled = self.scaler.transform(X_val_reshaped)
         X_test_scaled = self.scaler.transform(X_test_reshaped)
         
-        X_train_scaled = X_train_scaled.reshape(n_samples, n_timesteps, n_features)
+        # Reshape back to 3D
+        X_train_scaled = X_train_scaled.reshape(n_samples_train, n_timesteps, n_features)
+        X_val_scaled = X_val_scaled.reshape(X_val.shape[0], n_timesteps, n_features)
         X_test_scaled = X_test_scaled.reshape(X_test.shape[0], n_timesteps, n_features)
         
         # Save processed data
         os.makedirs("processed_data", exist_ok=True)
         
         np.save("processed_data/X_train.npy", X_train_scaled)
+        np.save("processed_data/X_val.npy", X_val_scaled)
         np.save("processed_data/X_test.npy", X_test_scaled)
         np.save("processed_data/y_train.npy", y_train)
+        np.save("processed_data/y_val.npy", y_val)
         np.save("processed_data/y_test.npy", y_test)
         
         # Save scaler
@@ -287,9 +305,10 @@ class BotIoTPreprocessor:
         
         print("✅ Data preprocessing complete!")
         print(f"Training data: {X_train_scaled.shape}")
+        print(f"Validation data: {X_val_scaled.shape}")
         print(f"Test data: {X_test_scaled.shape}")
         
-        return X_train_scaled, X_test_scaled, y_train, y_test
+        return X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test
     
     def create_data_visualization(self, df):
         """Create visualizations of the dataset"""
@@ -326,7 +345,7 @@ if __name__ == "__main__":
     preprocessor = BotIoTPreprocessor()
     
     try:
-        X_train, X_test, y_train, y_test = preprocessor.preprocess_data()
+        X_train, X_val, X_test, y_train, y_val, y_test = preprocessor.preprocess_data()
         print("\n✅ Preprocessing complete!")
         print("Next step: Run 'python train_model.py' to train the CNN-TCN model.")
         

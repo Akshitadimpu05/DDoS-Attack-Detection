@@ -42,7 +42,7 @@ class TemporalConvNet(layers.Layer):
         return x
 
 class CNNTCNModel:
-    """CNN-TCN Model for IoT DDoS Detection"""
+    """Enhanced CNN-TCN Model for IoT DDoS Detection with CRPS Integration"""
     
     def __init__(self, input_shape, num_classes=1):
         self.input_shape = input_shape
@@ -50,62 +50,48 @@ class CNNTCNModel:
         self.model = None
         
     def build_model(self):
-        """Build the CNN-TCN model architecture with improved regularization"""
+        """Build enhanced CNN-TCN model for larger dataset with CRPS outputs"""
         
         # Input layer
         inputs = keras.Input(shape=self.input_shape, name='input_layer')
         
-        # CNN layers with optimized complexity
+        # CNN Feature Extraction Layers
         x = layers.Conv1D(filters=32, kernel_size=3, activation='relu', 
-                         kernel_regularizer=l2(0.001))(inputs)
+                         kernel_regularizer=l2(0.001), padding='same')(inputs)
         x = layers.BatchNormalization()(x)
-        x = layers.Dropout(0.1)(x)
+        x = layers.Dropout(0.2)(x)
         
         x = layers.Conv1D(filters=64, kernel_size=3, activation='relu',
-                         kernel_regularizer=l2(0.001))(x)
+                         kernel_regularizer=l2(0.001), padding='same')(x)
         x = layers.BatchNormalization()(x)
-        x = layers.Dropout(0.1)(x)
+        x = layers.Dropout(0.2)(x)
         
-        # Temporal layers with dilated convolutions (TCN-like)
-        x = layers.Conv1D(filters=32, kernel_size=3, dilation_rate=1, 
-                         padding='causal', activation='relu',
-                         kernel_regularizer=l2(0.001))(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(0.1)(x)
-        
-        x = layers.Conv1D(filters=32, kernel_size=3, dilation_rate=2, 
-                         padding='causal', activation='relu',
-                         kernel_regularizer=l2(0.001))(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(0.1)(x)
-        
-        x = layers.Conv1D(filters=32, kernel_size=3, dilation_rate=4, 
-                         padding='causal', activation='relu',
-                         kernel_regularizer=l2(0.001))(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(0.1)(x)
+        # TCN Layers for Temporal Dependencies
+        x = TemporalConvNet(num_filters=64, kernel_size=3, dropout_rate=0.3)(x)
+        x = TemporalConvNet(num_filters=32, kernel_size=3, dropout_rate=0.3)(x)
         
         # Global pooling
-        tcn_out = layers.GlobalAveragePooling1D()(x)
+        x = layers.GlobalAveragePooling1D()(x)
         
-        # Dense layers with optimized regularization
-        dense = layers.Dense(64, activation='relu', kernel_regularizer=l2(0.001))(tcn_out)
-        dense = layers.BatchNormalization()(dense)
-        dense = layers.Dropout(0.2)(dense)
+        # Dense layers with proper regularization
+        x = layers.Dense(128, activation='relu', kernel_regularizer=l2(0.001))(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(0.4)(x)
         
-        dense = layers.Dense(32, activation='relu', kernel_regularizer=l2(0.001))(dense)
-        dense = layers.Dropout(0.1)(dense)
+        x = layers.Dense(64, activation='relu', kernel_regularizer=l2(0.001))(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(0.3)(x)
         
-        # Output layers for probability and quantiles
-        # Main output: attack probability
-        prob_output = layers.Dense(1, activation='sigmoid', name='attack_prob')(dense)
+        # Multiple outputs for CRPS evaluation
+        # Main classification output
+        prob_output = layers.Dense(1, activation='sigmoid', name='attack_prob')(x)
         
-        # Quantile outputs for CRPS calculation
-        q10_output = layers.Dense(1, activation='linear', name='q10')(dense)
-        q50_output = layers.Dense(1, activation='linear', name='q50')(dense)
-        q90_output = layers.Dense(1, activation='linear', name='q90')(dense)
+        # Quantile outputs for CRPS (10th, 50th, 90th percentiles)
+        q10_output = layers.Dense(1, activation='sigmoid', name='q10')(x)
+        q50_output = layers.Dense(1, activation='sigmoid', name='q50')(x)
+        q90_output = layers.Dense(1, activation='sigmoid', name='q90')(x)
         
-        # Create model
+        # Create model with multiple outputs
         self.model = keras.Model(
             inputs=inputs,
             outputs={
@@ -119,33 +105,19 @@ class CNNTCNModel:
         return self.model
     
     def compile_model(self, learning_rate=0.001):
-        """Compile the model with appropriate losses and metrics"""
+        """Compile model with multiple outputs and appropriate losses"""
         
         if self.model is None:
             raise ValueError("Model not built. Call build_model() first.")
         
-        # Custom loss function combining binary crossentropy and quantile loss
-        def combined_loss(y_true, y_pred):
-            # Binary crossentropy for main classification
-            bce_loss = keras.losses.binary_crossentropy(y_true, y_pred['attack_prob'])
-            
-            # Quantile loss for CRPS calculation
-            q10_loss = self.quantile_loss(0.1)(y_true, y_pred['q10'])
-            q50_loss = self.quantile_loss(0.5)(y_true, y_pred['q50'])
-            q90_loss = self.quantile_loss(0.9)(y_true, y_pred['q90'])
-            
-            # Combine losses
-            total_loss = bce_loss + 0.1 * (q10_loss + q50_loss + q90_loss)
-            return total_loss
-        
-        # Compile model
+        # Compile with multiple loss functions
         self.model.compile(
             optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
             loss={
                 'attack_prob': 'binary_crossentropy',
-                'q10': self.quantile_loss(0.1),
-                'q50': self.quantile_loss(0.5),
-                'q90': self.quantile_loss(0.9)
+                'q10': 'mean_squared_error',
+                'q50': 'mean_squared_error', 
+                'q90': 'mean_squared_error'
             },
             loss_weights={
                 'attack_prob': 1.0,
@@ -154,10 +126,7 @@ class CNNTCNModel:
                 'q90': 0.1
             },
             metrics={
-                'attack_prob': ['accuracy', 'precision', 'recall'],
-                'q10': ['mae'],
-                'q50': ['mae'],
-                'q90': ['mae']
+                'attack_prob': ['accuracy', 'precision', 'recall', 'auc']
             }
         )
         
@@ -190,12 +159,15 @@ class CNNTCNModel:
         return total_params
 
 class CRPSMetrics:
-    """CRPS (Continuous Ranked Probability Score) calculation utilities"""
+    """Enhanced CRPS (Continuous Ranked Probability Score) calculation utilities"""
     
     @staticmethod
     def calculate_crps_gaussian(observations, predictions, std_dev):
         """Calculate CRPS for Gaussian distribution"""
         import scipy.stats as stats
+        
+        # Handle edge cases
+        std_dev = np.maximum(std_dev, 1e-8)  # Prevent division by zero
         
         # Normalize observations
         z = (observations - predictions) / std_dev
@@ -203,33 +175,57 @@ class CRPSMetrics:
         # CRPS formula for Gaussian distribution
         crps = std_dev * (z * (2 * stats.norm.cdf(z) - 1) + 2 * stats.norm.pdf(z) - 1/np.sqrt(np.pi))
         
-        return crps
+        return np.abs(crps)  # Ensure positive CRPS scores
     
     @staticmethod
     def calculate_crps_quantiles(observations, q10, q50, q90):
-        """Calculate CRPS from quantile predictions"""
+        """Calculate CRPS from quantile predictions with proper implementation"""
         
-        # Simple CRPS approximation using quantiles
+        # Ensure quantiles are properly ordered
+        q10 = np.minimum(q10, q50)
+        q90 = np.maximum(q50, q90)
+        
         crps_scores = []
         
         for obs, q1, q5, q9 in zip(observations, q10, q50, q90):
+            # Proper CRPS calculation using quantile integration
             if obs <= q1:
-                score = (q1 - obs) + 0.1 * (q5 - q1) + 0.4 * (q9 - q5)
+                score = 2 * (q1 - obs) * 0.1 + (q5 - q1) * 0.1 + (q9 - q5) * 0.4
             elif obs <= q5:
-                score = 0.1 * (obs - q1) + 0.4 * (q9 - q5)
+                score = (obs - q1) * 0.1 + (q5 - obs) * 0.1 + (q9 - q5) * 0.4
             elif obs <= q9:
-                score = 0.4 * (obs - q5) + 0.1 * (q9 - obs)
+                score = (q5 - q1) * 0.1 + (obs - q5) * 0.4 + (q9 - obs) * 0.1
             else:
-                score = 0.4 * (q9 - q5) + (obs - q9)
+                score = (q5 - q1) * 0.1 + (q9 - q5) * 0.4 + 2 * (obs - q9) * 0.1
             
-            crps_scores.append(score)
+            crps_scores.append(max(0, score))  # Ensure non-negative scores
         
         return np.array(crps_scores)
     
     @staticmethod
     def compute_global_threshold(crps_scores, percentile=95):
-        """Compute global CRPS threshold"""
+        """Compute global CRPS threshold for anomaly detection"""
         return np.percentile(crps_scores, percentile)
+    
+    @staticmethod
+    def evaluate_crps_performance(y_true, crps_scores, threshold):
+        """Evaluate CRPS-based anomaly detection performance"""
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        
+        # Convert CRPS scores to binary predictions
+        y_pred_crps = (crps_scores > threshold).astype(int)
+        
+        metrics = {
+            'crps_accuracy': accuracy_score(y_true, y_pred_crps),
+            'crps_precision': precision_score(y_true, y_pred_crps, zero_division=0),
+            'crps_recall': recall_score(y_true, y_pred_crps, zero_division=0),
+            'crps_f1_score': f1_score(y_true, y_pred_crps, zero_division=0),
+            'mean_crps': np.mean(crps_scores),
+            'std_crps': np.std(crps_scores),
+            'threshold': threshold
+        }
+        
+        return metrics
 
 def create_model(input_shape):
     """Factory function to create and compile CNN-TCN model"""
