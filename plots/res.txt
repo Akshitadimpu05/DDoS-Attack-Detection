@@ -1,0 +1,15 @@
+=== CNN-CRPS MODEL EVALUATION METRICS ===
+Accuracy: 0.9857 (98.57%)
+Precision: 0.9848 (98.48%)
+Recall: 0.9867 (98.67%)
+F1-Score: 0.9857 (98.57%)
+AUC-ROC: 0.9989 (99.89%)
+
+=== CRPS-ENHANCED METRICS ===
+CRPS Accuracy: 0.8603 (86.03%)
+CRPS Precision: 0.8602 (86.02%)
+CRPS Recall: 0.8602 (86.02%)
+CRPS F1-Score: 0.8602 (86.02%)
+Mean CRPS: 0.0323
+Std CRPS: 0.1668
+CRPS Threshold: 0.0000

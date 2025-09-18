@@ -35,3 +35,9 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Large data files (>100MB for GitHub)
+processed_data/*.npy
+models/*.h5
+models/*.tflite
+models/*.weights.h5

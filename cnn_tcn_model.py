@@ -50,37 +50,47 @@ class CNNTCNModel:
         self.model = None
         
     def build_model(self):
-        """Build enhanced CNN-TCN model for larger dataset with CRPS outputs"""
+        """Build improved CNN-TCN model for better performance"""
         
         # Input layer
         inputs = keras.Input(shape=self.input_shape, name='input_layer')
         
-        # CNN Feature Extraction Layers
-        x = layers.Conv1D(filters=32, kernel_size=3, activation='relu', 
-                         kernel_regularizer=l2(0.001), padding='same')(inputs)
+        # Enhanced CNN Feature Extraction Layers
+        x = layers.Conv1D(filters=64, kernel_size=5, activation='relu', 
+                         kernel_regularizer=l2(0.0001), padding='same')(inputs)
         x = layers.BatchNormalization()(x)
-        x = layers.Dropout(0.2)(x)
+        x = layers.Dropout(0.1)(x)
+        
+        x = layers.Conv1D(filters=128, kernel_size=3, activation='relu',
+                         kernel_regularizer=l2(0.0001), padding='same')(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(0.1)(x)
         
         x = layers.Conv1D(filters=64, kernel_size=3, activation='relu',
-                         kernel_regularizer=l2(0.001), padding='same')(x)
+                         kernel_regularizer=l2(0.0001), padding='same')(x)
         x = layers.BatchNormalization()(x)
-        x = layers.Dropout(0.2)(x)
+        x = layers.Dropout(0.1)(x)
         
-        # TCN Layers for Temporal Dependencies
-        x = TemporalConvNet(num_filters=64, kernel_size=3, dropout_rate=0.3)(x)
-        x = TemporalConvNet(num_filters=32, kernel_size=3, dropout_rate=0.3)(x)
+        # Enhanced TCN Layers for Temporal Dependencies
+        x = TemporalConvNet(num_filters=128, kernel_size=3, dropout_rate=0.2)(x)
+        x = TemporalConvNet(num_filters=64, kernel_size=3, dropout_rate=0.2)(x)
+        x = TemporalConvNet(num_filters=32, kernel_size=3, dropout_rate=0.2)(x)
         
         # Global pooling
         x = layers.GlobalAveragePooling1D()(x)
         
-        # Dense layers with proper regularization
-        x = layers.Dense(128, activation='relu', kernel_regularizer=l2(0.001))(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Dropout(0.4)(x)
-        
-        x = layers.Dense(64, activation='relu', kernel_regularizer=l2(0.001))(x)
+        # Enhanced dense layers
+        x = layers.Dense(256, activation='relu', kernel_regularizer=l2(0.0001))(x)
         x = layers.BatchNormalization()(x)
         x = layers.Dropout(0.3)(x)
+        
+        x = layers.Dense(128, activation='relu', kernel_regularizer=l2(0.0001))(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(0.2)(x)
+        
+        x = layers.Dense(64, activation='relu', kernel_regularizer=l2(0.0001))(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.Dropout(0.1)(x)
         
         # Multiple outputs for CRPS evaluation
         # Main classification output
@@ -104,15 +114,20 @@ class CNNTCNModel:
         
         return self.model
     
-    def compile_model(self, learning_rate=0.001):
-        """Compile model with multiple outputs and appropriate losses"""
+    def compile_model(self, learning_rate=0.002):
+        """Compile model with improved optimizer settings"""
         
         if self.model is None:
             raise ValueError("Model not built. Call build_model() first.")
         
-        # Compile with multiple loss functions
+        # Compile with improved optimizer and loss weights
         self.model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            optimizer=keras.optimizers.Adam(
+                learning_rate=learning_rate,
+                beta_1=0.9,
+                beta_2=0.999,
+                epsilon=1e-7
+            ),
             loss={
                 'attack_prob': 'binary_crossentropy',
                 'q10': 'mean_squared_error',
@@ -121,9 +136,9 @@ class CNNTCNModel:
             },
             loss_weights={
                 'attack_prob': 1.0,
-                'q10': 0.1,
-                'q50': 0.1,
-                'q90': 0.1
+                'q10': 0.05,
+                'q50': 0.05,
+                'q90': 0.05
             },
             metrics={
                 'attack_prob': ['accuracy', 'precision', 'recall', 'auc']

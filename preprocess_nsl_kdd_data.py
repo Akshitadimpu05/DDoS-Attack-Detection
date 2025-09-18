@@ -31,8 +31,8 @@ class NSLKDDPreprocessor:
         
         # Dataset configuration
         self.target_column = 'attack_type'
-        self.sequence_length = 100  # Sequence length for temporal modeling
-        self.step_size = 50  # Step size for sliding window
+        self.sequence_length = 10  # Reduced sequence length for better performance
+        self.step_size = 1  # Smaller step size for more data
         
     def load_dataset(self):
         """Load NSL-KDD dataset with memory-efficient processing"""
@@ -129,10 +129,10 @@ class NSLKDDPreprocessor:
         
         return df
     
-    def balance_dataset(self, df, max_samples_per_class=100000):
-        """Balance the dataset to prevent class imbalance and overfitting"""
+    def balance_dataset(self, df, max_samples_per_class=50000):
+        """Balance the dataset with much larger sample size for better training"""
         
-        print("Balancing dataset...")
+        print("Balancing dataset with increased sample size...")
         
         # Separate classes
         normal_data = df[df['binary_label'] == 0]
@@ -142,19 +142,13 @@ class NSLKDDPreprocessor:
         print(f"  Normal samples: {len(normal_data):,}")
         print(f"  Attack samples: {len(attack_data):,}")
         
-        # Limit samples per class to prevent memory issues and overfitting
-        if len(normal_data) > max_samples_per_class:
-            normal_data = normal_data.sample(n=max_samples_per_class, random_state=42)
+        # Use much larger sample sizes for better training
+        normal_samples = min(len(normal_data), max_samples_per_class)
+        attack_samples = min(len(attack_data), max_samples_per_class)
         
-        if len(attack_data) > max_samples_per_class:
-            attack_data = attack_data.sample(n=max_samples_per_class, random_state=42)
-        
-        # Balance classes by taking equal samples
-        min_samples = min(len(normal_data), len(attack_data))
-        
-        # Take equal samples from both classes
-        normal_balanced = normal_data.sample(n=min_samples, random_state=42)
-        attack_balanced = attack_data.sample(n=min_samples, random_state=42)
+        # Take larger balanced samples
+        normal_balanced = normal_data.sample(n=normal_samples, random_state=42)
+        attack_balanced = attack_data.sample(n=attack_samples, random_state=42)
         
         # Combine balanced data
         balanced_df = pd.concat([normal_balanced, attack_balanced], ignore_index=True)
@@ -168,7 +162,7 @@ class NSLKDDPreprocessor:
         return balanced_df
     
     def prepare_features(self, df):
-        """Prepare features for CNN-TCN model"""
+        """Prepare features with zero variance removal"""
         
         print("Preparing features...")
         
@@ -176,7 +170,7 @@ class NSLKDDPreprocessor:
         feature_columns = df.select_dtypes(include=[np.number]).columns.tolist()
         feature_columns = [col for col in feature_columns if col not in [self.target_column, 'binary_label']]
         
-        print(f"Selected {len(feature_columns)} features")
+        print(f"Initial features: {len(feature_columns)}")
         
         # Extract features and labels
         X = df[feature_columns].values
@@ -185,6 +179,16 @@ class NSLKDDPreprocessor:
         # Handle any remaining NaN or inf values
         X = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)
         
+        # Remove zero variance features
+        feature_variances = np.var(X, axis=0)
+        non_zero_var_indices = feature_variances > 1e-8
+        
+        X = X[:, non_zero_var_indices]
+        feature_columns = [feature_columns[i] for i in range(len(feature_columns)) if non_zero_var_indices[i]]
+        
+        removed_features = np.sum(~non_zero_var_indices)
+        print(f"Removed {removed_features} zero variance features")
+        print(f"Final features: {len(feature_columns)}")
         print(f"Feature matrix shape: {X.shape}")
         print(f"Labels shape: {y.shape}")
         

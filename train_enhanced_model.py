@@ -128,7 +128,7 @@ class EnhancedModelTrainer:
         
         return callbacks
     
-    def train_model(self, X_train, X_val, y_train, y_val, epochs=30, batch_size=32):
+    def train_model(self, X_train, X_val, y_train, y_val, epochs=40, batch_size=32):
         """Train enhanced CNN-TCN model with proper regularization"""
         
         print("Creating enhanced CNN-TCN model for CIC-IDS-2017 dataset...")
@@ -144,8 +144,35 @@ class EnhancedModelTrainer:
         print(f"Class weights: {class_weight_dict}")
         print(f"Training for maximum {epochs} epochs with batch size {batch_size}")
         
-        # Create callbacks
-        callbacks = self.create_callbacks(max_epochs=epochs)
+        # Create callbacks with improved patience
+        callbacks = [
+            # Early stopping with more patience
+            keras.callbacks.EarlyStopping(
+                monitor='val_loss',
+                patience=12,
+                restore_best_weights=True,
+                verbose=1
+            ),
+            
+            # Reduce learning rate on plateau
+            keras.callbacks.ReduceLROnPlateau(
+                monitor='val_attack_prob_loss',
+                mode='min',
+                factor=0.3,
+                patience=6,
+                min_lr=1e-8,
+                verbose=1
+            ),
+            
+            # Model checkpoint
+            keras.callbacks.ModelCheckpoint(
+                filepath=os.path.join(self.model_save_path, 'best_model.h5'),
+                monitor='val_attack_prob_accuracy',
+                mode='max',
+                save_best_only=True,
+                verbose=1
+            )
+        ]
         
         # Train model (remove class_weight for multi-output model)
         print("Starting training...")
@@ -303,16 +330,76 @@ class EnhancedModelTrainer:
             plt.savefig(os.path.join(self.plots_save_path, 'training_dashboard.png'), dpi=300, bbox_inches='tight')
             plt.close()
         
-        # 2. Enhanced Confusion Matrix
+        # 2. Detailed Confusion Matrix with Enhanced Metrics
         y_pred_binary = (y_pred_prob > 0.5).astype(int)
         cm = confusion_matrix(y_test, y_pred_binary)
         
+        # Calculate detailed metrics
+        tn, fp, fn, tp = cm.ravel()
+        total = tn + fp + fn + tp
+        
+        # Create detailed confusion matrix
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        
+        # Left plot: Standard confusion matrix with counts
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax1,
+                   xticklabels=['Normal', 'Attack'], 
+                   yticklabels=['Normal', 'Attack'],
+                   cbar_kws={'label': 'Count'})
+        ax1.set_title('🎯 Confusion Matrix (Counts)\nDDoS Attack Detection', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('True Label', fontsize=12)
+        ax1.set_xlabel('Predicted Label', fontsize=12)
+        
+        # Add count annotations with percentages
+        for i in range(2):
+            for j in range(2):
+                count = cm[i, j]
+                percentage = (count / total) * 100
+                ax1.text(j + 0.5, i + 0.7, f'{count}\n({percentage:.1f}%)', 
+                        ha='center', va='center', fontsize=11, fontweight='bold')
+        
+        # Right plot: Normalized confusion matrix with percentages
+        cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        sns.heatmap(cm_normalized, annot=True, fmt='.2%', cmap='Oranges', ax=ax2,
+                   xticklabels=['Normal', 'Attack'], 
+                   yticklabels=['Normal', 'Attack'],
+                   cbar_kws={'label': 'Percentage'})
+        ax2.set_title('📊 Normalized Confusion Matrix (%)\nDDoS Attack Detection', fontsize=14, fontweight='bold')
+        ax2.set_ylabel('True Label', fontsize=12)
+        ax2.set_xlabel('Predicted Label', fontsize=12)
+        
+        # Add detailed metrics text box
+        metrics_text = f"""📈 Detailed Classification Metrics:
+        
+True Positives (TP): {tp}
+True Negatives (TN): {tn}
+False Positives (FP): {fp}
+False Negatives (FN): {fn}
+
+Accuracy: {metrics['accuracy']:.4f}
+Precision: {metrics['precision']:.4f}
+Recall (Sensitivity): {metrics['recall']:.4f}
+Specificity: {tn/(tn+fp):.4f}
+F1-Score: {metrics['f1_score']:.4f}
+AUC-ROC: {metrics['auc_roc']:.4f}
+
+False Positive Rate: {fp/(fp+tn):.4f}
+False Negative Rate: {fn/(fn+tp):.4f}"""
+        
+        plt.figtext(0.02, 0.02, metrics_text, fontsize=10, 
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgray', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.plots_save_path, 'detailed_confusion_matrix.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # 2b. Simple Confusion Matrix (for compatibility)
         plt.figure(figsize=(10, 8))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                    xticklabels=['Normal', 'Attack'], 
                    yticklabels=['Normal', 'Attack'],
                    cbar_kws={'label': 'Count'})
-        plt.title('🎯 Confusion Matrix - DDoS Attack Detection\nCIC-IDS-2017 Dataset', fontsize=14, fontweight='bold', pad=20)
+        plt.title('🎯 Confusion Matrix - DDoS Attack Detection\nNSL-KDD Dataset', fontsize=14, fontweight='bold', pad=20)
         plt.ylabel('True Label', fontsize=12)
         plt.xlabel('Predicted Label', fontsize=12)
         
@@ -329,9 +416,73 @@ class EnhancedModelTrainer:
         plt.savefig(os.path.join(self.plots_save_path, 'confusion_matrix.png'), dpi=300, bbox_inches='tight')
         plt.close()
         
-        # 3. ROC Curve with AUC
-        fpr, tpr, _ = roc_curve(y_test, y_pred_prob)
+        # 3. Enhanced ROC Curve with Multiple Metrics
+        fpr, tpr, thresholds = roc_curve(y_test, y_pred_prob)
         
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        
+        # Left plot: ROC Curve
+        ax1.plot(fpr, tpr, label=f'CNN-TCN Model (AUC = {metrics["auc_roc"]:.3f})', 
+                linewidth=3, color='#e74c3c')
+        ax1.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=2, alpha=0.7)
+        ax1.fill_between(fpr, tpr, alpha=0.3, color='#e74c3c')
+        
+        # Add optimal threshold point
+        optimal_idx = np.argmax(tpr - fpr)
+        optimal_threshold = thresholds[optimal_idx]
+        ax1.plot(fpr[optimal_idx], tpr[optimal_idx], 'ro', markersize=10, 
+                label=f'Optimal Threshold: {optimal_threshold:.3f}')
+        
+        ax1.set_xlabel('False Positive Rate', fontsize=12)
+        ax1.set_ylabel('True Positive Rate', fontsize=12)
+        ax1.set_title('📈 ROC Curve - DDoS Detection\nNSL-KDD Dataset', fontsize=14, fontweight='bold')
+        ax1.legend(fontsize=11)
+        ax1.grid(True, alpha=0.3)
+        
+        # Right plot: Precision-Recall Curve
+        from sklearn.metrics import precision_recall_curve, average_precision_score
+        precision_curve, recall_curve, pr_thresholds = precision_recall_curve(y_test, y_pred_prob)
+        avg_precision = average_precision_score(y_test, y_pred_prob)
+        
+        ax2.plot(recall_curve, precision_curve, linewidth=3, color='#2ecc71',
+                label=f'PR Curve (AP = {avg_precision:.3f})')
+        ax2.fill_between(recall_curve, precision_curve, alpha=0.3, color='#2ecc71')
+        ax2.axhline(y=metrics['precision'], color='red', linestyle='--', 
+                   label=f'Current Precision: {metrics["precision"]:.3f}')
+        ax2.axvline(x=metrics['recall'], color='blue', linestyle='--',
+                   label=f'Current Recall: {metrics["recall"]:.3f}')
+        
+        ax2.set_xlabel('Recall', fontsize=12)
+        ax2.set_ylabel('Precision', fontsize=12)
+        ax2.set_title('📊 Precision-Recall Curve\nDDoS Detection', fontsize=14, fontweight='bold')
+        ax2.legend(fontsize=11)
+        ax2.grid(True, alpha=0.3)
+        
+        # Add performance summary
+        perf_text = f"""🎯 Model Performance Summary:
+        
+AUC-ROC: {metrics['auc_roc']:.4f}
+Average Precision: {avg_precision:.4f}
+Optimal Threshold: {optimal_threshold:.4f}
+
+At Optimal Threshold:
+• TPR (Sensitivity): {tpr[optimal_idx]:.4f}
+• FPR: {fpr[optimal_idx]:.4f}
+• Specificity: {1-fpr[optimal_idx]:.4f}
+
+Current Model (0.5 threshold):
+• Precision: {metrics['precision']:.4f}
+• Recall: {metrics['recall']:.4f}
+• F1-Score: {metrics['f1_score']:.4f}"""
+        
+        plt.figtext(0.02, 0.02, perf_text, fontsize=10,
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.plots_save_path, 'enhanced_roc_analysis.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # 3b. Simple ROC Curve (for compatibility)
         plt.figure(figsize=(10, 8))
         plt.plot(fpr, tpr, label=f'CNN-TCN Model (AUC = {metrics["auc_roc"]:.3f})', linewidth=3, color='#e74c3c')
         plt.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=2, alpha=0.7)
@@ -339,13 +490,13 @@ class EnhancedModelTrainer:
         
         plt.xlabel('False Positive Rate', fontsize=12)
         plt.ylabel('True Positive Rate', fontsize=12)
-        plt.title('📈 ROC Curve - DDoS Attack Detection\nCIC-IDS-2017 Dataset', fontsize=14, fontweight='bold', pad=20)
+        plt.title('📈 ROC Curve - DDoS Attack Detection\nNSL-KDD Dataset', fontsize=14, fontweight='bold', pad=20)
         plt.legend(fontsize=12)
         plt.grid(True, alpha=0.3)
         
         # Add optimal threshold point
         optimal_idx = np.argmax(tpr - fpr)
-        optimal_threshold = _[optimal_idx]
+        optimal_threshold = thresholds[optimal_idx]
         plt.plot(fpr[optimal_idx], tpr[optimal_idx], 'ro', markersize=10, label=f'Optimal Threshold: {optimal_threshold:.3f}')
         plt.legend(fontsize=12)
         
@@ -503,9 +654,9 @@ def main():
     if X_train is None:
         return
     
-    # Train model (limited to 30 epochs as requested)
-    print(f"\n🎯 Training with maximum 30 epochs...")
-    history = trainer.train_model(X_train, X_val, y_train, y_val, epochs=30, batch_size=32)
+    # Train model (increased to 40 epochs for better performance)
+    print(f"\n🎯 Training with maximum 40 epochs...")
+    history = trainer.train_model(X_train, X_val, y_train, y_val, epochs=40, batch_size=32)
     
     # Evaluate model
     print(f"\n📊 Evaluating model performance...")
