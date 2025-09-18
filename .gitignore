@@ -1,6 +1,9 @@
 # Dataset files
 data/
 
+# Output data
+output_data/
+
 # Python cache
 __pycache__/
 *.pyc
@@ -41,3 +44,4 @@ processed_data/*.npy
 models/*.h5
 models/*.tflite
 models/*.weights.h5
+

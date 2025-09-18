@@ -20,7 +20,7 @@ warnings.filterwarnings('ignore')
 class NSLKDDPreprocessor:
     """Enhanced preprocessor for NSL-KDD dataset"""
     
-    def __init__(self, data_dir="data", processed_dir="processed_data"):
+    def __init__(self, data_dir="data", processed_dir="output_data"):
         self.data_dir = data_dir
         self.processed_dir = processed_dir
         self.scaler = StandardScaler()

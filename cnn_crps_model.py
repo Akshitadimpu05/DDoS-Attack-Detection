@@ -133,12 +133,18 @@ class CNNCRPSModel:
         print("Loading processed sequence data...")
         
         try:
-            X_train = np.load(os.path.join('processed_data', 'X_train.npy'))
-            X_val = np.load(os.path.join('processed_data', 'X_val.npy'))
-            X_test = np.load(os.path.join('processed_data', 'X_test.npy'))
-            y_train = np.load(os.path.join('processed_data', 'y_train.npy'))
-            y_val = np.load(os.path.join('processed_data', 'y_val.npy'))
-            y_test = np.load(os.path.join('processed_data', 'y_test.npy'))
+            # Check if files exist in output_data, otherwise fall back to processed_data
+            if os.path.exists(os.path.join('output_data', 'X_train.npy')):
+                data_path = 'output_data'
+            else:
+                data_path = 'processed_data'
+                
+            X_train = np.load(os.path.join(data_path, 'X_train.npy'), allow_pickle=True)
+            X_val = np.load(os.path.join(data_path, 'X_val.npy'), allow_pickle=True)
+            X_test = np.load(os.path.join(data_path, 'X_test.npy'), allow_pickle=True)
+            y_train = np.load(os.path.join(data_path, 'y_train.npy'), allow_pickle=True)
+            y_val = np.load(os.path.join(data_path, 'y_val.npy'), allow_pickle=True)
+            y_test = np.load(os.path.join(data_path, 'y_test.npy'), allow_pickle=True)
             
             # Prepare multi-output labels for CRPS
             y_train_dict = {
@@ -366,10 +372,7 @@ class CNNCRPSModel:
         plt.ylabel('True Label', fontsize=12)
         plt.xlabel('Predicted Label', fontsize=12)
         
-        # Add metrics text
-        plt.text(1.05, 0.8, f'Accuracy: {metrics["accuracy"]:.3f}\nPrecision: {metrics["precision"]:.3f}\nRecall: {metrics["recall"]:.3f}\nF1-Score: {metrics["f1_score"]:.3f}', 
-                transform=plt.gca().transAxes, fontsize=11, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+        # Remove metrics text from confusion matrix
         
         plt.savefig(os.path.join(self.plots_save_path, 'cnn_crps_confusion_matrix.png'), dpi=300, bbox_inches='tight')
         plt.close()
@@ -410,7 +413,50 @@ class CNNCRPSModel:
         plt.savefig(os.path.join(self.plots_save_path, 'cnn_crps_analysis.png'), dpi=300, bbox_inches='tight')
         plt.close()
         
+        # 5. CRPS-ES Time Series Plot with Global Threshold
+        plt.figure(figsize=(12, 8))
+        
+        # Create time series of CRPS scores
+        time_windows = np.arange(len(crps_scores))
+        global_threshold = np.percentile(crps_scores, 95)  # 95th percentile as global threshold
+        
+        plt.plot(time_windows, crps_scores, 'b-', linewidth=1.5, label='CRPS-ES', alpha=0.8)
+        plt.axhline(y=global_threshold, color='red', linestyle='--', linewidth=2, 
+                   label=f'Global Threshold = {global_threshold:.2f}')
+        
+        # Highlight anomalies (values above threshold)
+        anomaly_indices = crps_scores > global_threshold
+        if np.any(anomaly_indices):
+            plt.scatter(time_windows[anomaly_indices], crps_scores[anomaly_indices], 
+                       color='red', s=30, alpha=0.7, zorder=5)
+        
+        plt.xlabel('Time Window', fontsize=12)
+        plt.ylabel('CRPS-ES Value', fontsize=12)
+        plt.title('Client 1 - CRPS-ES with Global Threshold', fontsize=14, fontweight='bold')
+        plt.legend(fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        plt.savefig(os.path.join(self.plots_save_path, 'crps_es_timeseries.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # 6. Save all metrics to CSV
+        metrics_df = pd.DataFrame({
+            'Metric': ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'AUC-ROC', 
+                      'CRPS_Accuracy', 'CRPS_Precision', 'CRPS_Recall', 'CRPS_F1_Score', 
+                      'Mean_CRPS', 'Std_CRPS', 'CRPS_Threshold', 'Global_Threshold'],
+            'Value': [metrics['accuracy'], metrics['precision'], metrics['recall'], 
+                     metrics['f1_score'], metrics['auc_roc'], metrics['crps_accuracy'],
+                     metrics['crps_precision'], metrics['crps_recall'], metrics['crps_f1'],
+                     metrics['mean_crps'], metrics['std_crps'], metrics['crps_threshold'],
+                     global_threshold]
+        })
+        
+        metrics_df.to_csv(os.path.join(self.plots_save_path, 'model_evaluation_metrics.csv'), index=False)
+        
         print("✅ CNN-CRPS plots created successfully!")
+        print("✅ CRPS-ES time series plot generated!")
+        print("✅ All metrics saved to CSV file!")
 
 def main():
     """Main training function"""
@@ -422,27 +468,24 @@ def main():
     # Initialize model
     model_trainer = CNNCRPSModel()
     
-    # Load data
-    X_train, X_val, X_test, y_train, y_val, y_test = model_trainer.load_data()
+    # Load and preprocess data
+    X_train, X_val, X_test, y_train_dict, y_val_dict, y_test = model_trainer.load_data()
     
-    if X_train is None:
-        print("❌ Failed to load data. Please run preprocessing first.")
-        return
-    
-    # Update input shape based on actual data
-    model_trainer.input_shape = X_train.shape[1:]
-    
+    print("✅ Data loaded from output_data folder!")
+        
     # Build model
+    model_trainer.input_shape = (X_train.shape[1], X_train.shape[2])
     model_trainer.build_model()
-    
-    # Train model (limited to 40 epochs)
-    history = model_trainer.train_model(X_train, X_val, y_train, y_val, epochs=40, batch_size=64)
-    
+        
+    # Train model
+    history = model_trainer.train_model(X_train, X_val, y_train_dict, y_val_dict)
+        
     # Evaluate model
     metrics, y_pred_prob, crps_scores = model_trainer.evaluate_model(X_test, y_test)
-    
+        
     # Create plots
     model_trainer.create_plots(history, metrics, y_test, y_pred_prob, crps_scores)
+        
     
     # Save model
     model_trainer.model.save(os.path.join(model_trainer.model_save_path, 'cnn_crps_model.h5'))
